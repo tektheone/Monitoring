@@ -176,31 +176,23 @@ func (d *Device) CalculateUptime() float64 {
 	defer d.mu.Unlock()
 	
 	if len(d.heartbeatBuckets) == 0 {
-		return 0.0
+		return 0.0 // No heartbeats
 	}
 	
-	if d.firstHeartbeat.IsZero() || d.lastHeartbeat.IsZero() {
-		return 0.0
+	if len(d.heartbeatBuckets) == 1 {
+		return 100.0 // Single heartbeat = 100%
 	}
 	
-	// Calculate minutes between first and last heartbeat
-	duration := d.lastHeartbeat.Sub(d.firstHeartbeat)
-	numMinutesBetweenFirstAndLastHeartbeat := duration.Minutes()
+	// Total minutes from first to last (inclusive)
+	firstMinute := d.firstHeartbeat.Truncate(time.Minute)
+	lastMinute := d.lastHeartbeat.Truncate(time.Minute)
+	totalMinutes := int64(lastMinute.Sub(firstMinute)/time.Minute) + 1
 	
-	if numMinutesBetweenFirstAndLastHeartbeat == 0 {
-		return 100.0 // All heartbeats in same minute
-	}
+	// Count unique minute buckets with heartbeats
+	heartbeatMinutes := int64(len(d.heartbeatBuckets))
 	
-	// Exact formula: uptime = (sumHeartbeats / numMinutesBetweenFirstAndLastHeartbeat) * 100
-	sumHeartbeats := float64(len(d.heartbeatBuckets))
-	uptime := (sumHeartbeats / numMinutesBetweenFirstAndLastHeartbeat) * 100
-	
-	// Cap at 100%
-	if uptime > 100.0 {
-		uptime = 100.0
-	}
-	
-	return uptime
+	// Exact formula: uptime = (sumHeartbeats / numMinutesBetweenFirstAndLast) * 100
+	return (float64(heartbeatMinutes) / float64(totalMinutes)) * 100
 }
 
 // CalculateAvgUploadTime returns simple average of upload times
