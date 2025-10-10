@@ -20,10 +20,10 @@ type Device struct {
 	uploadSum         time.Duration      // sum of durations
 }
 
-// Store manages the device data with thread-safe operations
+// Store manages the device data with concurrent-safe operations
 type Store struct {
-	devices map[string]*Device
 	mu      sync.RWMutex
+	devices map[string]*Device
 }
 
 // New creates a new Store instance
@@ -33,7 +33,7 @@ func New() *Store {
 	}
 }
 
-// LoadFromCSV loads devices from a CSV file
+// LoadFromCSV loads exactly 5 devices from a CSV file with concurrent-safe operations
 func (s *Store) LoadFromCSV(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -44,13 +44,30 @@ func (s *Store) LoadFromCSV(filename string) error {
 	reader := csv.NewReader(file)
 	
 	// Read header
-	_, err = reader.Read()
+	header, err := reader.Read()
 	if err != nil {
 		return fmt.Errorf("failed to read CSV header: %w", err)
+	}
+	
+	// Validate header
+	if len(header) == 0 || header[0] != "device_id" {
+		return fmt.Errorf("invalid CSV header: expected 'device_id', got %v", header)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Clear existing devices
+	s.devices = make(map[string]*Device)
+	
+	// Expected device IDs from the specification
+	expectedDevices := map[string]bool{
+		"60-6b-44-84-dc-64": false,
+		"b4-45-52-a2-f1-3c": false,
+		"26-9a-66-01-33-83": false,
+		"18-b8-87-e7-1f-06": false,
+		"38-4e-73-e0-33-59": false,
+	}
 
 	for {
 		record, err := reader.Read()
@@ -63,11 +80,36 @@ func (s *Store) LoadFromCSV(filename string) error {
 
 		if len(record) > 0 && record[0] != "" {
 			deviceID := record[0]
+			
+			// Validate device ID is expected
+			if _, expected := expectedDevices[deviceID]; !expected {
+				return fmt.Errorf("unexpected device ID in CSV: %s", deviceID)
+			}
+			
+			// Mark as found
+			expectedDevices[deviceID] = true
+			
+			// Create device with concurrent-safe initialization
 			s.devices[deviceID] = &Device{
 				id:               deviceID,
 				heartbeatBuckets: make(map[time.Time]bool),
 			}
 		}
+	}
+	
+	// Verify all 5 devices were loaded
+	loadedCount := 0
+	var missingDevices []string
+	for deviceID, found := range expectedDevices {
+		if found {
+			loadedCount++
+		} else {
+			missingDevices = append(missingDevices, deviceID)
+		}
+	}
+	
+	if loadedCount != 5 {
+		return fmt.Errorf("expected exactly 5 devices, loaded %d. Missing: %v", loadedCount, missingDevices)
 	}
 
 	return nil
