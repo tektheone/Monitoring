@@ -9,13 +9,15 @@ import (
 	"time"
 )
 
-// Device represents a device in the fleet
+// Device represents a device in the fleet with minute-bucket heartbeat tracking
 type Device struct {
-	ID          string
-	LastSeen    time.Time
-	Heartbeats  []time.Time
-	UploadTimes []time.Duration
-	mu          sync.RWMutex
+	mu                sync.Mutex
+	id                string
+	heartbeatBuckets  map[time.Time]bool // minute buckets (truncated to minute)
+	firstHeartbeat    time.Time          // earliest heartbeat timestamp
+	lastHeartbeat     time.Time          // latest heartbeat timestamp
+	uploadCount       int64              // total samples
+	uploadSum         time.Duration      // sum of durations
 }
 
 // Store manages the device data with thread-safe operations
@@ -62,9 +64,8 @@ func (s *Store) LoadFromCSV(filename string) error {
 		if len(record) > 0 && record[0] != "" {
 			deviceID := record[0]
 			s.devices[deviceID] = &Device{
-				ID:          deviceID,
-				Heartbeats:  make([]time.Time, 0),
-				UploadTimes: make([]time.Duration, 0),
+				id:               deviceID,
+				heartbeatBuckets: make(map[time.Time]bool),
 			}
 		}
 	}
@@ -100,41 +101,99 @@ func (s *Store) GetAllDevices() map[string]*Device {
 	return devices
 }
 
-// AddHeartbeat adds a heartbeat timestamp for a device
+// AddHeartbeat adds a heartbeat with O(1) bucket insertion
+func (d *Device) AddHeartbeat(sentAt time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	// Truncate to minute for bucket key
+	minuteBucket := sentAt.Truncate(time.Minute)
+	d.heartbeatBuckets[minuteBucket] = true
+	
+	// Update first/last heartbeat tracking
+	if d.firstHeartbeat.IsZero() || sentAt.Before(d.firstHeartbeat) {
+		d.firstHeartbeat = sentAt
+	}
+	if d.lastHeartbeat.IsZero() || sentAt.After(d.lastHeartbeat) {
+		d.lastHeartbeat = sentAt
+	}
+}
+
+// AddUploadStat adds upload statistics with O(1) accumulation
+func (d *Device) AddUploadStat(sentAt time.Time, uploadNanos int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	d.uploadCount++
+	d.uploadSum += time.Duration(uploadNanos)
+}
+
+// CalculateUptime returns uptime percentage using exact formula implementation
+func (d *Device) CalculateUptime() float64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	if len(d.heartbeatBuckets) == 0 {
+		return 0.0
+	}
+	
+	if d.firstHeartbeat.IsZero() || d.lastHeartbeat.IsZero() {
+		return 0.0
+	}
+	
+	// Calculate minutes between first and last heartbeat
+	duration := d.lastHeartbeat.Sub(d.firstHeartbeat)
+	numMinutesBetweenFirstAndLastHeartbeat := duration.Minutes()
+	
+	if numMinutesBetweenFirstAndLastHeartbeat == 0 {
+		return 100.0 // All heartbeats in same minute
+	}
+	
+	// Exact formula: uptime = (sumHeartbeats / numMinutesBetweenFirstAndLastHeartbeat) * 100
+	sumHeartbeats := float64(len(d.heartbeatBuckets))
+	uptime := (sumHeartbeats / numMinutesBetweenFirstAndLastHeartbeat) * 100
+	
+	// Cap at 100%
+	if uptime > 100.0 {
+		uptime = 100.0
+	}
+	
+	return uptime
+}
+
+// CalculateAvgUploadTime returns simple average of upload times
+func (d *Device) CalculateAvgUploadTime() time.Duration {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	if d.uploadCount == 0 {
+		return 0
+	}
+	
+	return d.uploadSum / time.Duration(d.uploadCount)
+}
+
+// Store wrapper methods for backward compatibility
 func (s *Store) AddHeartbeat(deviceID string, timestamp time.Time) {
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
 	s.mu.RUnlock()
 
-	if !exists {
-		return
+	if exists {
+		device.AddHeartbeat(timestamp)
 	}
-
-	device.mu.Lock()
-	defer device.mu.Unlock()
-	
-	device.Heartbeats = append(device.Heartbeats, timestamp)
-	device.LastSeen = timestamp
 }
 
-// AddUploadTime adds an upload duration for a device
 func (s *Store) AddUploadTime(deviceID string, duration time.Duration) {
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
 	s.mu.RUnlock()
 
-	if !exists {
-		return
+	if exists {
+		device.AddUploadStat(time.Now(), duration.Nanoseconds())
 	}
-
-	device.mu.Lock()
-	defer device.mu.Unlock()
-	
-	device.UploadTimes = append(device.UploadTimes, duration)
 }
 
-// CalculateUptime calculates uptime percentage for a device using the exact formula
-// uptime = (sumHeartbeats / numMinutesBetweenFirstAndLastHeartbeat) * 100
 func (s *Store) CalculateUptime(deviceID string) float64 {
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
@@ -144,51 +203,9 @@ func (s *Store) CalculateUptime(deviceID string) float64 {
 		return 0.0
 	}
 
-	device.mu.RLock()
-	defer device.mu.RUnlock()
-
-	if len(device.Heartbeats) == 0 {
-		return 0.0
-	}
-
-	if len(device.Heartbeats) == 1 {
-		return 100.0 // Single heartbeat = 100% uptime
-	}
-
-	// Find first and last heartbeat times
-	firstHeartbeat := device.Heartbeats[0]
-	lastHeartbeat := device.Heartbeats[0]
-
-	for _, hb := range device.Heartbeats {
-		if hb.Before(firstHeartbeat) {
-			firstHeartbeat = hb
-		}
-		if hb.After(lastHeartbeat) {
-			lastHeartbeat = hb
-		}
-	}
-
-	// Calculate minutes between first and last heartbeat
-	duration := lastHeartbeat.Sub(firstHeartbeat)
-	numMinutes := duration.Minutes()
-
-	if numMinutes == 0 {
-		return 100.0 // All heartbeats in same minute
-	}
-
-	// Apply exact uptime formula
-	sumHeartbeats := float64(len(device.Heartbeats))
-	uptime := (sumHeartbeats / numMinutes) * 100
-
-	// Cap at 100%
-	if uptime > 100.0 {
-		uptime = 100.0
-	}
-
-	return uptime
+	return device.CalculateUptime()
 }
 
-// CalculateAverageUploadTime calculates average upload time for a device
 func (s *Store) CalculateAverageUploadTime(deviceID string) time.Duration {
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
@@ -198,19 +215,7 @@ func (s *Store) CalculateAverageUploadTime(deviceID string) time.Duration {
 		return 0
 	}
 
-	device.mu.RLock()
-	defer device.mu.RUnlock()
-
-	if len(device.UploadTimes) == 0 {
-		return 0
-	}
-
-	var total time.Duration
-	for _, uploadTime := range device.UploadTimes {
-		total += uploadTime
-	}
-
-	return total / time.Duration(len(device.UploadTimes))
+	return device.CalculateAvgUploadTime()
 }
 
 // GetDeviceStats returns device statistics safely
@@ -223,8 +228,8 @@ func (s *Store) GetDeviceStats(deviceID string) (lastSeen time.Time, heartbeatCo
 		return time.Time{}, 0, false
 	}
 
-	device.mu.RLock()
-	defer device.mu.RUnlock()
+	device.mu.Lock()
+	defer device.mu.Unlock()
 
-	return device.LastSeen, len(device.Heartbeats), true
+	return device.lastHeartbeat, len(device.heartbeatBuckets), true
 }
