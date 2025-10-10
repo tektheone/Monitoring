@@ -7,6 +7,8 @@
 *.dylib
 fleet-management-server
 device-simulator-*
+run-server
+server
 
 # Test binary, built with `go test -c`
 *.test
