@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"fleet-management-server/internal/store"
@@ -24,11 +25,8 @@ func New(store *store.Store) *Server {
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 
-	// API endpoints with base path /api/v1
-	mux.HandleFunc("/api/v1/heartbeat", s.handleHeartbeat)
-	mux.HandleFunc("/api/v1/upload", s.handleUpload)
-	mux.HandleFunc("/api/v1/devices", s.handleDevices)
-	mux.HandleFunc("/api/v1/devices/", s.handleDeviceDetail)
+	// Milestone 5: HTTP API endpoints with exact OpenAPI contract compliance
+	mux.HandleFunc("/api/v1/devices/", s.handleDeviceEndpoints)
 
 	// Health check endpoint
 	mux.HandleFunc("/health", s.handleHealth)
@@ -36,171 +34,156 @@ func (s *Server) Router() http.Handler {
 	return mux
 }
 
-// HeartbeatRequest represents a heartbeat request
+// HeartbeatRequest represents a heartbeat request for POST /api/v1/devices/{device_id}/heartbeat
 type HeartbeatRequest struct {
-	DeviceID  string `json:"device_id"`
-	Timestamp int64  `json:"timestamp"`
+	SentAt string `json:"sent_at"` // RFC3339 timestamp format
 }
 
-// UploadRequest represents an upload request
-type UploadRequest struct {
-	DeviceID     string `json:"device_id"`
-	UploadTimeMs int64  `json:"upload_time_ms"`
+// StatsRequest represents a stats request for POST /api/v1/devices/{device_id}/stats
+type StatsRequest struct {
+	SentAt     string `json:"sent_at"`     // RFC3339 timestamp format
+	UploadTime int64  `json:"upload_time"` // int64 nanoseconds -> time.Duration
 }
 
-// DeviceResponse represents a device in API responses
-type DeviceResponse struct {
-	ID                string  `json:"id"`
-	LastSeen          int64   `json:"last_seen"`
-	UptimePercentage  float64 `json:"uptime_percentage"`
-	AvgUploadTimeMs   int64   `json:"avg_upload_time_ms"`
-	HeartbeatCount    int     `json:"heartbeat_count"`
+// StatsResponse represents the response for GET /api/v1/devices/{device_id}/stats
+type StatsResponse struct {
+	AvgUploadTime string  `json:"avg_upload_time"` // time.Duration.String() format (e.g., "250ms")
+	Uptime        float64 `json:"uptime"`          // float64 with 3 decimals (e.g., 98.999)
 }
 
-// DevicesResponse represents the devices list response
-type DevicesResponse struct {
-	Devices []DeviceResponse `json:"devices"`
-	Count   int              `json:"count"`
+// ErrorResponse represents error responses
+type ErrorResponse struct {
+	Message string `json:"msg"`
 }
 
-// handleHeartbeat processes heartbeat requests
-func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+// handleDeviceEndpoints handles all device-related endpoints with proper routing
+func (s *Server) handleDeviceEndpoints(w http.ResponseWriter, r *http.Request) {
+	// Parse URL path to extract device_id and endpoint
+	path := r.URL.Path
+	
+	// Expected patterns:
+	// POST /api/v1/devices/{device_id}/heartbeat
+	// POST /api/v1/devices/{device_id}/stats  
+	// GET  /api/v1/devices/{device_id}/stats
+	
+	// Remove /api/v1/devices/ prefix
+	prefix := "/api/v1/devices/"
+	if len(path) < len(prefix) || path[:len(prefix)] != prefix {
+		s.sendError(w, "Invalid endpoint", http.StatusNotFound)
 		return
 	}
+	
+	remaining := path[len(prefix):] // Remove "/api/v1/devices/"
+	parts := strings.Split(remaining, "/")
+	
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		s.sendError(w, "Invalid endpoint format", http.StatusNotFound)
+		return
+	}
+	
+	deviceID := parts[0]
+	endpoint := parts[1]
+	
+	// Validate device exists first
+	if _, exists := s.store.GetDevice(deviceID); !exists {
+		s.sendError(w, "Device not found", http.StatusNotFound)
+		return
+	}
+	
+	switch endpoint {
+	case "heartbeat":
+		if r.Method == http.MethodPost {
+			s.handleHeartbeat(w, r, deviceID)
+		} else {
+			s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	case "stats":
+		if r.Method == http.MethodPost {
+			s.handleStatsPost(w, r, deviceID)
+		} else if r.Method == http.MethodGet {
+			s.handleStatsGet(w, r, deviceID)
+		} else {
+			s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	default:
+		s.sendError(w, "Invalid endpoint", http.StatusNotFound)
+	}
+}
 
+// sendError sends a JSON error response
+func (s *Server) sendError(w http.ResponseWriter, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(ErrorResponse{Message: message})
+}
+
+// handleHeartbeat processes POST /api/v1/devices/{device_id}/heartbeat
+func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, deviceID string) {
 	var req HeartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		s.sendError(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	if req.DeviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
+	// Parse sent_at timestamp (RFC3339 format)
+	sentAt, err := time.Parse(time.RFC3339, req.SentAt)
+	if err != nil {
+		s.sendError(w, "Invalid request payload", http.StatusBadRequest)
 		return
-	}
-
-	// Convert timestamp to time.Time
-	timestamp := time.Unix(req.Timestamp, 0)
-	if req.Timestamp == 0 {
-		timestamp = time.Now()
 	}
 
 	// Add heartbeat to store
-	s.store.AddHeartbeat(req.DeviceID, timestamp)
+	s.store.AddHeartbeat(deviceID, sentAt)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	// Success: 204 No Content
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleUpload processes upload time requests
-func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req UploadRequest
+// handleStatsPost processes POST /api/v1/devices/{device_id}/stats
+func (s *Server) handleStatsPost(w http.ResponseWriter, r *http.Request, deviceID string) {
+	var req StatsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		s.sendError(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	if req.DeviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
+	// Parse sent_at timestamp (RFC3339 format) - currently not used but validated
+	_, err := time.Parse(time.RFC3339, req.SentAt)
+	if err != nil {
+		s.sendError(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	if req.UploadTimeMs <= 0 {
-		http.Error(w, "upload_time_ms must be positive", http.StatusBadRequest)
-		return
-	}
+	// Note: upload_time = int64 nanoseconds -> time.Duration
+	s.store.AddUploadTime(deviceID, time.Duration(req.UploadTime))
 
-	// Convert milliseconds to duration
-	uploadDuration := time.Duration(req.UploadTimeMs) * time.Millisecond
-
-	// Add upload time to store
-	s.store.AddUploadTime(req.DeviceID, uploadDuration)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	// Success: 204 No Content
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleDevices returns all devices with their metrics
-func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	devices := s.store.GetAllDevices()
-	deviceResponses := make([]DeviceResponse, 0, len(devices))
-
-	for deviceID := range devices {
-		uptime := s.store.CalculateUptime(deviceID)
-		avgUploadTime := s.store.CalculateAverageUploadTime(deviceID)
-		lastSeen, heartbeatCount, exists := s.store.GetDeviceStats(deviceID)
-
-		if !exists {
-			continue
-		}
-
-		deviceResp := DeviceResponse{
-			ID:                deviceID,
-			LastSeen:          lastSeen.Unix(),
-			UptimePercentage:  uptime,
-			AvgUploadTimeMs:   avgUploadTime.Nanoseconds() / 1000000, // Convert to milliseconds
-			HeartbeatCount:    heartbeatCount,
-		}
-
-		deviceResponses = append(deviceResponses, deviceResp)
-	}
-
-	response := DevicesResponse{
-		Devices: deviceResponses,
-		Count:   len(deviceResponses),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-// handleDeviceDetail returns details for a specific device
-func (s *Server) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract device ID from URL path
-	deviceID := r.URL.Path[len("/api/v1/devices/"):]
-	if deviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
-		return
-	}
-
-	lastSeen, heartbeatCount, exists := s.store.GetDeviceStats(deviceID)
-	if !exists {
-		http.Error(w, "Device not found", http.StatusNotFound)
-		return
-	}
-
+// handleStatsGet processes GET /api/v1/devices/{device_id}/stats
+func (s *Server) handleStatsGet(w http.ResponseWriter, r *http.Request, deviceID string) {
 	uptime := s.store.CalculateUptime(deviceID)
 	avgUploadTime := s.store.CalculateAverageUploadTime(deviceID)
 
-	deviceResp := DeviceResponse{
-		ID:                deviceID,
-		LastSeen:          lastSeen.Unix(),
-		UptimePercentage:  uptime,
-		AvgUploadTimeMs:   avgUploadTime.Nanoseconds() / 1000000, // Convert to milliseconds
-		HeartbeatCount:    heartbeatCount,
+	// Check if device has no heartbeats AND no uploads
+	_, heartbeatCount, exists := s.store.GetDeviceStats(deviceID)
+	if !exists || (heartbeatCount == 0 && avgUploadTime == 0) {
+		// No heartbeats AND no uploads: 204 No Content
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Has data: 200 + JSON response
+	// Format: time.Duration.String() + float64 with 3 decimals
+	response := StatsResponse{
+		AvgUploadTime: avgUploadTime.String(), // time.Duration.String() format (e.g., "250ms")
+		Uptime:        uptime,                 // float64 with 3 decimals (e.g., 98.999)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(deviceResp)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleHealth returns server health status
