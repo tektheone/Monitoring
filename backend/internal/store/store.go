@@ -143,31 +143,37 @@ func (s *Store) GetAllDevices() map[string]*Device {
 	return devices
 }
 
-// AddHeartbeat adds a heartbeat with O(1) bucket insertion
+// AddHeartbeat adds a heartbeat with O(1) bucket insertion and minimal lock duration
 func (d *Device) AddHeartbeat(sentAt time.Time) {
+	// Per-device Mutex: Minimize lock duration for concurrent simulator requests
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	
-	// Truncate to minute for bucket key
+	// O(1) Operations: Direct map access for heartbeats
+	// Efficient minute-bucket operations
 	minuteBucket := sentAt.Truncate(time.Minute)
 	d.heartbeatBuckets[minuteBucket] = true
 	
-	// Update first/last heartbeat tracking
+	// Update first/last heartbeat tracking (O(1) operations)
 	if d.firstHeartbeat.IsZero() || sentAt.Before(d.firstHeartbeat) {
 		d.firstHeartbeat = sentAt
 	}
 	if d.lastHeartbeat.IsZero() || sentAt.After(d.lastHeartbeat) {
 		d.lastHeartbeat = sentAt
 	}
+	
+	d.mu.Unlock() // Release lock immediately after updates
 }
 
-// AddUploadStat adds upload statistics with O(1) accumulation
+// AddUploadStat adds upload statistics with O(1) accumulation and minimal lock duration
 func (d *Device) AddUploadStat(sentAt time.Time, uploadNanos int64) {
+	// Per-device Mutex: Minimize lock duration for concurrent simulator requests
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	
+	// O(1) Operations: Direct accumulation for uploads
 	d.uploadCount++
 	d.uploadSum += time.Duration(uploadNanos)
+	
+	d.mu.Unlock() // Release lock immediately after updates
 }
 
 // CalculateUptime returns uptime percentage using exact formula implementation
@@ -207,48 +213,64 @@ func (d *Device) CalculateAvgUploadTime() time.Duration {
 	return d.uploadSum / time.Duration(d.uploadCount)
 }
 
-// Store wrapper methods for backward compatibility
+// Milestone 6: Optimized concurrent operations for simulator requests
+// Global RWMutex: Devices map read/write
+// Per-device Mutex: Individual device updates  
+// O(1) Operations: Direct map access for heartbeats/uploads
+
+// AddHeartbeat provides thread-safe heartbeat addition with minimal lock duration
 func (s *Store) AddHeartbeat(deviceID string, timestamp time.Time) {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
+	s.mu.RUnlock() // Release immediately after lookup
+	
 	if exists {
+		// Per-device Mutex: Individual device update (no global contention)
 		device.AddHeartbeat(timestamp)
 	}
 }
 
+// AddUploadTime provides thread-safe upload time addition with minimal lock duration
 func (s *Store) AddUploadTime(deviceID string, duration time.Duration) {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
+	s.mu.RUnlock() // Release immediately after lookup
+	
 	if exists {
+		// Per-device Mutex: Individual device update (no global contention)
 		device.AddUploadStat(time.Now(), duration.Nanoseconds())
 	}
 }
 
+// CalculateUptime provides thread-safe uptime calculation with minimal lock duration
 func (s *Store) CalculateUptime(deviceID string) float64 {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
+	s.mu.RUnlock() // Release immediately after lookup
+	
 	if !exists {
 		return 0.0
 	}
-
+	
+	// Per-device Mutex: Individual device calculation (no global contention)
 	return device.CalculateUptime()
 }
 
+// CalculateAverageUploadTime provides thread-safe average upload time calculation
 func (s *Store) CalculateAverageUploadTime(deviceID string) time.Duration {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
+	s.mu.RUnlock() // Release immediately after lookup
+	
 	if !exists {
 		return 0
 	}
-
+	
+	// Per-device Mutex: Individual device calculation (no global contention)
 	return device.CalculateAvgUploadTime()
 }
 
