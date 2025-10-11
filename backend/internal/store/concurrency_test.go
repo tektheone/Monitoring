@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// TestMilestone6ConcurrentSimulatorRequests tests the optimized concurrency implementation
-func TestMilestone6ConcurrentSimulatorRequests(t *testing.T) {
+// TestConcurrentSimulatorRequests tests the optimized concurrency implementation
+func TestConcurrentSimulatorRequests(t *testing.T) {
 	// Create store with test devices
 	store := New()
 	
