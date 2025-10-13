@@ -1,12 +1,13 @@
 import type { DeviceSummary } from '@/types/api'
 import { timeAgo } from '@/utils/time'
+import { memo } from 'react'
 
 type Props = {
   device: DeviceSummary
   onClick?: (device: DeviceSummary) => void
 }
 
-export default function DeviceCard({ device, onClick }: Props) {
+function DeviceCard({ device, onClick }: Props) {
   const isOnline = device.status === 'online'
   const statusColor = isOnline ? 'bg-green-500' : 'bg-red-500'
   const borderColor = isOnline ? 'border-green-200' : 'border-gray-200'
@@ -27,3 +28,5 @@ export default function DeviceCard({ device, onClick }: Props) {
     </button>
   )
 }
+
+export default memo(DeviceCard)

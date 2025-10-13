@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getDevices } from '@/api/client'
 import type { DeviceSummary } from '@/types/api'
 import DeviceCard from './DeviceCard'
+import { DEVICES_REFRESH_MS } from '@/config'
 
 function SkeletonCard() {
   return (
@@ -15,11 +16,15 @@ function SkeletonCard() {
   )
 }
 
-export default function DevicesList({ onSelect }: { onSelect?: (d: DeviceSummary) => void }) {
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
+export default function DevicesList({ onSelect, refreshMs = DEVICES_REFRESH_MS }: { onSelect?: (d: DeviceSummary) => void; refreshMs?: number }) {
+  const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery<DeviceSummary[]>({
     queryKey: ['devices'],
     queryFn: getDevices,
-    refetchInterval: 30_000,
+    refetchInterval: refreshMs,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    retry: 1,
+    placeholderData: (prev) => prev ?? [],
   })
 
   if (isLoading) {
@@ -47,11 +52,28 @@ export default function DevicesList({ onSelect }: { onSelect?: (d: DeviceSummary
     return <div className="text-gray-500">No devices found.</div>
   }
 
+  const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : '—'
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {data.map((d) => (
-        <DeviceCard key={d.id} device={d} onClick={onSelect} />
-      ))}
+    <div>
+      <div className="mb-2 flex items-center gap-3 text-sm text-gray-600">
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+          title="Refresh devices"
+        >
+          {isFetching ? 'Refreshing…' : 'Refresh'}
+        </button>
+        <span>Last updated: {lastUpdated}</span>
+        {isFetching && <span className="animate-pulse text-gray-400">(updating)</span>}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {data.map((d) => (
+          <DeviceCard key={d.id} device={d} onClick={onSelect} />
+        ))}
+      </div>
     </div>
   )
 }
