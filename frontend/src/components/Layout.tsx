@@ -1,8 +1,10 @@
 import { ReactNode, useState } from 'react'
+import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { useConnection } from '@/hooks/useConnection'
 
-export function Header({ title, healthStatus, deviceCount, lastUpdated }: { title: string; healthStatus?: string; deviceCount?: number; lastUpdated?: number }) {
+export function Header({ title, healthStatus, deviceCount, lastUpdated, connection }: { title: string; healthStatus?: string; deviceCount?: number; lastUpdated?: number; connection?: 'connected' | 'reconnecting' | 'disconnected' | 'offline' }) {
   const healthy = healthStatus === 'healthy'
+  const connColor = connection === 'connected' ? 'bg-green-500' : connection === 'reconnecting' ? 'bg-yellow-500' : connection ? 'bg-red-500' : 'bg-gray-300'
   return (
     <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
@@ -11,6 +13,10 @@ export function Header({ title, healthStatus, deviceCount, lastUpdated }: { titl
           <h1 className="text-lg font-semibold">{title}</h1>
         </div>
         <div className="flex items-center gap-4 text-sm text-gray-700">
+          <div className="hidden sm:flex items-center gap-2">
+            <span className={`inline-block h-2.5 w-2.5 rounded-full ${connColor}`} />
+            <span className="capitalize">{connection ?? 'unknown'}</span>
+          </div>
           <div className="flex items-center gap-2">
             <span className={`inline-block h-2.5 w-2.5 rounded-full ${healthy ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="capitalize">{healthStatus ?? 'unknown'}</span>
@@ -55,27 +61,54 @@ export function Sidebar({ current, onNavigate }: { current: string; onNavigate: 
   )
 }
 
-export function Footer() {
+export function Footer({ backendStatus }: { backendStatus?: 'connected' | 'reconnecting' | 'disconnected' | 'offline' }) {
   const { online } = useConnection()
+  const qc = useQueryClient()
+  const healthFetching = useIsFetching({ queryKey: ['health'] })
+  const healthState = qc.getQueryState(['health']) as { status?: 'pending' | 'error' | 'success' } | undefined
+
+  // Derive backend connection status
+  // - If browser offline: Offline (red)
+  // - Else if health query in error: Disconnected (red)
+  // - Else if fetching: Reconnecting (yellow)
+  // - Else: Connected (green)
+  let label = 'Connected'
+  let color = 'bg-green-500'
+  if (backendStatus) {
+    label = backendStatus === 'connected' ? 'Connected' : backendStatus === 'reconnecting' ? 'Reconnecting' : backendStatus === 'offline' ? 'Offline' : 'Disconnected'
+    color = backendStatus === 'connected' ? 'bg-green-500' : backendStatus === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
+  } else {
+    if (!online) {
+      label = 'Offline'
+      color = 'bg-red-500'
+    } else if (healthState?.status === 'error') {
+      label = 'Disconnected'
+      color = 'bg-red-500'
+    } else if (healthFetching > 0) {
+      label = 'Reconnecting'
+      color = 'bg-yellow-500'
+    }
+  }
+
   return (
     <footer className="mt-auto border-t bg-white">
       <div className="mx-auto max-w-6xl px-4 py-2 text-sm text-gray-700 flex items-center gap-2">
-        <span className={`inline-block h-2.5 w-2.5 rounded-full ${online ? 'bg-green-500' : 'bg-red-500'}`} />
-        <span>{online ? 'Online' : 'Offline'}</span>
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${color}`} />
+        <span>{label}</span>
       </div>
     </footer>
   )
 }
 
-export default function Layout({ header, children }: { header: Parameters<typeof Header>[0]; children: ReactNode }) {
+export default function Layout({ header, children, backendStatus }: { header: Parameters<typeof Header>[0]; backendStatus?: 'connected' | 'reconnecting' | 'disconnected' | 'offline'; children: ReactNode }) {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
-      <Header {...header} />
+      <Header {...header} connection={backendStatus} />
       <div className="mx-auto grid w-full max-w-6xl grid-cols-1 sm:grid-cols-[220px_1fr] gap-4 px-4 py-4">
         <Sidebar current="devices" onNavigate={() => {}} />
         <main>{children}</main>
       </div>
-      <Footer />
+      <Footer backendStatus={backendStatus} />
     </div>
   )
 }

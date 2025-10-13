@@ -4,20 +4,27 @@ import { getHealth } from '@/api/client'
 import DevicesList from '@/components/DevicesList'
 import DeviceDetailsModal from '@/components/DeviceDetailsModal'
 import type { DeviceSummary } from '@/types/api'
-import { DEVICES_REFRESH_MS } from '@/config'
 import Layout from '@/components/Layout'
+import HealthCard from '@/components/HealthCard'
 
 function App() {
   const [selected, setSelected] = useState<DeviceSummary | null>(null)
-  const [devicesRefreshMs, setDevicesRefreshMs] = useState<number>(DEVICES_REFRESH_MS)
   const globalFetching = useIsFetching()
-  const { data, isLoading, error } = useQuery({
+  const { data, error, isFetching } = useQuery({
     queryKey: ['health'],
     queryFn: getHealth,
+    refetchInterval: 15_000,
+    retry: 1,
   })
 
-  if (isLoading) return <div className="p-6">Loading…</div>
-  if (error) return <div className="p-6 text-red-600">{String((error as Error).message)}</div>
+  // Derive footer/backend status from health query
+  const backendStatus: 'connected' | 'reconnecting' | 'disconnected' = error
+    ? 'disconnected'
+    : isFetching
+    ? 'reconnecting'
+    : 'connected'
+
+  // Do not early-return on loading or error; we want the dashboard visible.
 
   return (
     <Layout
@@ -27,6 +34,7 @@ function App() {
         deviceCount: data?.device_count,
         lastUpdated: data?.timestamp,
       }}
+      backendStatus={backendStatus}
     >
       {/* Global fetching indicator */}
       {globalFetching > 0 && (
@@ -35,24 +43,16 @@ function App() {
         </div>
       )}
 
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Devices</h2>
-        <label className="text-sm text-gray-600 flex items-center gap-2">
-          Refresh every
-          <select
-            className="rounded border px-2 py-1 text-sm bg-white"
-            value={devicesRefreshMs}
-            onChange={(e) => setDevicesRefreshMs(Number(e.target.value))}
-          >
-            <option value={10_000}>10s</option>
-            <option value={15_000}>15s</option>
-            <option value={30_000}>30s</option>
-            <option value={60_000}>60s</option>
-          </select>
-        </label>
+      {/* HealthCard */}
+      <div className="mb-4">
+        <HealthCard data={data} isFetching={isFetching} isError={!!error} />
       </div>
 
-      <DevicesList refreshMs={devicesRefreshMs} onSelect={(d) => setSelected(d)} />
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Devices</h2>
+      </div>
+
+      <DevicesList onSelect={(d) => setSelected(d)} />
 
       {selected && (
         <DeviceDetailsModal device={selected} onClose={() => setSelected(null)} />
