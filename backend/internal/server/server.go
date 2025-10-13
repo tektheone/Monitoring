@@ -26,6 +26,7 @@ func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 
 	// Milestone 5: HTTP API endpoints with exact OpenAPI contract compliance
+	mux.HandleFunc("/api/v1/devices", s.handleDevicesList)
 	mux.HandleFunc("/api/v1/devices/", s.handleDeviceEndpoints)
 
 	// Health check endpoint
