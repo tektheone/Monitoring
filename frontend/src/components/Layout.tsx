@@ -1,0 +1,81 @@
+import { ReactNode, useState } from 'react'
+import { useConnection } from '@/hooks/useConnection'
+
+export function Header({ title, healthStatus, deviceCount, lastUpdated }: { title: string; healthStatus?: string; deviceCount?: number; lastUpdated?: number }) {
+  const healthy = healthStatus === 'healthy'
+  return (
+    <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="h-6 w-6 rounded bg-gray-900" />
+          <h1 className="text-lg font-semibold">{title}</h1>
+        </div>
+        <div className="flex items-center gap-4 text-sm text-gray-700">
+          <div className="flex items-center gap-2">
+            <span className={`inline-block h-2.5 w-2.5 rounded-full ${healthy ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="capitalize">{healthStatus ?? 'unknown'}</span>
+          </div>
+          <div className="hidden sm:block">Devices: <span className="font-medium">{deviceCount ?? '—'}</span></div>
+          <div className="hidden md:block text-xs text-gray-500">Updated: {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : '—'}</div>
+        </div>
+      </div>
+    </header>
+  )
+}
+
+export function Sidebar({ current, onNavigate }: { current: string; onNavigate: (key: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const links = [
+    { key: 'devices', label: 'Devices' },
+    { key: 'analytics', label: 'Analytics (soon)' },
+    { key: 'settings', label: 'Settings (soon)' },
+  ]
+  return (
+    <aside className="border-r bg-white">
+      <div className="sm:hidden p-2">
+        <button className="rounded border px-2 py-1 text-sm" onClick={() => setOpen((v) => !v)}>
+          {open ? 'Hide' : 'Menu'}
+        </button>
+      </div>
+      <nav className={`p-3 space-y-1 ${open ? 'block' : 'hidden sm:block'}`}>
+        {links.map((l) => (
+          <button
+            key={l.key}
+            onClick={() => onNavigate(l.key)}
+            disabled={l.key !== 'devices'}
+            className={`block w-full rounded px-3 py-2 text-left text-sm ${
+              current === l.key ? 'bg-gray-100 font-medium' : 'hover:bg-gray-50'
+            } ${l.key !== 'devices' ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            {l.label}
+          </button>
+        ))}
+      </nav>
+    </aside>
+  )
+}
+
+export function Footer() {
+  const { online } = useConnection()
+  return (
+    <footer className="mt-auto border-t bg-white">
+      <div className="mx-auto max-w-6xl px-4 py-2 text-sm text-gray-700 flex items-center gap-2">
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${online ? 'bg-green-500' : 'bg-red-500'}`} />
+        <span>{online ? 'Online' : 'Offline'}</span>
+      </div>
+    </footer>
+  )
+}
+
+export default function Layout({ header, children }: { header: Parameters<typeof Header>[0]; children: ReactNode }) {
+  return (
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
+      <Header {...header} />
+      <div className="mx-auto grid w-full max-w-6xl grid-cols-1 sm:grid-cols-[220px_1fr] gap-4 px-4 py-4">
+        <Sidebar current="devices" onNavigate={() => {}} />
+        <main>{children}</main>
+      </div>
+      <Footer />
+    </div>
+  )
+}
