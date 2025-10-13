@@ -1,8 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { getHealth } from '@/api/client'
 import DevicesList from '@/components/DevicesList'
+import DeviceDetailsModal from '@/components/DeviceDetailsModal'
+import type { DeviceSummary } from '@/types/api'
 
 function App() {
+  const [selected, setSelected] = useState<DeviceSummary | null>(null)
   const { data, isLoading, error } = useQuery({
     queryKey: ['health'],
     queryFn: getHealth,
@@ -25,7 +29,11 @@ function App() {
       </div>
 
       <h2 className="text-xl font-semibold mb-3">Devices</h2>
-      <DevicesList />
+      <DevicesList onSelect={(d) => setSelected(d)} />
+
+      {selected && (
+        <DeviceDetailsModal device={selected} onClose={() => setSelected(null)} />
+      )}
     </div>
   )
 }
