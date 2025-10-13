@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { getHealth } from '@/api/client'
+import DevicesList from '@/components/DevicesList'
 
 function App() {
   const { data, isLoading, error } = useQuery({
@@ -13,7 +14,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-6">
       <h1 className="text-2xl font-semibold mb-4">SafelyYou Fleet Monitoring</h1>
-      <div className="rounded-lg border bg-white p-4 shadow-sm w-full max-w-xl">
+      <div className="rounded-lg border bg-white p-4 shadow-sm w-full max-w-xl mb-6">
         <div className="text-sm text-gray-500">Backend Health</div>
         <div className="mt-1 flex items-center gap-2">
           <span className={`inline-block h-3 w-3 rounded-full ${data?.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`} />
@@ -22,6 +23,9 @@ function App() {
         <div className="mt-2 text-sm text-gray-600">Devices: {data?.device_count}</div>
         <div className="mt-1 text-xs text-gray-400">Timestamp: {data?.timestamp}</div>
       </div>
+
+      <h2 className="text-xl font-semibold mb-3">Devices</h2>
+      <DevicesList />
     </div>
   )
 }
