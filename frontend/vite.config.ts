@@ -18,6 +18,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:6733',
         changeOrigin: true,
       },
+      // Proxy SSE endpoint to backend
+      '/events': {
+        target: 'http://127.0.0.1:6733',
+        changeOrigin: true,
+      },
     },
   },
   resolve: {

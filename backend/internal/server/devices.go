@@ -13,6 +13,37 @@ type DeviceSummary struct {
 	Status   string `json:"status,omitempty"`
 }
 
+// buildDeviceSummaries computes the same payload as handleDevicesList without writing the response
+func (s *Server) buildDeviceSummaries() []DeviceSummary {
+    devices := s.store.GetAllDevices()
+    now := time.Now()
+
+    out := make([]DeviceSummary, 0, len(devices))
+    for id := range devices {
+        lastSeen, _, exists := s.store.GetDeviceStats(id)
+        status := "offline"
+        if exists && !lastSeen.IsZero() {
+            lastSeenLocal := lastSeen.In(now.Location())
+            timeDiff := now.Sub(lastSeenLocal)
+            if timeDiff < 2*time.Minute {
+                status = "online"
+            }
+        }
+
+        var lastSeenStr string
+        if !lastSeen.IsZero() {
+            lastSeenStr = lastSeen.Format(time.RFC3339)
+        }
+
+        out = append(out, DeviceSummary{
+            ID:       id,
+            LastSeen: lastSeenStr,
+            Status:   status,
+        })
+    }
+    return out
+}
+
 // handleDevicesList processes GET /api/v1/devices (list all devices)
 func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

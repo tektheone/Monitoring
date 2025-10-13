@@ -1,4 +1,6 @@
 import type { HealthStatus } from '@/types/api'
+import { useSSE } from '@/hooks/useSSE'
+import { useConnection } from '@/hooks/useConnection'
 
 type Props = {
   data?: HealthStatus
@@ -7,9 +9,17 @@ type Props = {
 }
 
 export default function HealthCard({ data, isFetching, isError }: Props) {
-  // Connection status badge: green connected, yellow reconnecting, red disconnected
-  const conn = isError ? 'disconnected' : isFetching ? 'reconnecting' : 'connected'
-  const color = conn === 'connected' ? 'bg-green-500' : conn === 'reconnecting' ? 'bg-yellow-500' : 'bg-red-500'
+  // Derive connection from SSE and browser online state (not query flags)
+  const { status: sseStatus } = useSSE()
+  const { online } = useConnection()
+  const conn: 'connected' | 'reconnecting' | 'disconnected' | 'offline' = !online
+    ? 'offline'
+    : sseStatus === 'connected'
+    ? 'connected'
+    : sseStatus === 'connecting'
+    ? 'reconnecting'
+    : 'disconnected'
+  const color = conn === 'connected' ? 'bg-green-500' : conn === 'reconnecting' ? 'bg-yellow-500' : conn === 'offline' ? 'bg-gray-400' : 'bg-red-500'
 
   return (
     <div className="rounded-lg border bg-white p-4 shadow-sm w-full max-w-xl">
