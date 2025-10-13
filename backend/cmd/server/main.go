@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -9,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"fleet-management-server/internal/server"
 	"fleet-management-server/internal/store"
@@ -41,25 +39,26 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("Starting server on %s", httpServer.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown
+	// Wait for interrupt signal to shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("Shutting down server...")
 
-	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// 1) Close all SSE clients immediately to unblock long-lived streams
+	if srv != nil {
+		srv.Close()
+	}
 
-	if err := httpServer.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	// 2) Close the HTTP listener immediately (no 30s wait)
+	if err := httpServer.Close(); err != nil {
+		log.Printf("HTTP server close error: %v", err)
 	}
 
 	log.Println("Server exited")

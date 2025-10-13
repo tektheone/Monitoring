@@ -7,6 +7,8 @@
 *.dylib
 fleet-management-server
 device-simulator-*
+run-server
+server
 
 # Test binary, built with `go test -c`
 *.test
@@ -31,6 +33,12 @@ node_modules/
 .pnp.js
 
 # Production builds
+dist/
+
+# NPM/Yarn lockfiles (requested to ignore)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 /frontend/dist/
 /frontend/build/
 
@@ -103,3 +111,11 @@ Thumbs.db
 # package-lock.json
 # yarn.lock
 # pnpm-lock.yaml
+
+# Tooling allowlist: ensure backend source is not ignored so assistants can read/edit
+!backend/**
+!**/*.go
+
+# Server binary
+backend/server
+backend/bin/server

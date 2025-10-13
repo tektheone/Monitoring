@@ -9,19 +9,21 @@ import (
 	"time"
 )
 
-// Device represents a device in the fleet
+// Device represents a device in the fleet with minute-bucket heartbeat tracking
 type Device struct {
-	ID          string
-	LastSeen    time.Time
-	Heartbeats  []time.Time
-	UploadTimes []time.Duration
-	mu          sync.RWMutex
+	mu                sync.Mutex
+	id                string
+	heartbeatBuckets  map[time.Time]bool // minute buckets (truncated to minute)
+	firstHeartbeat    time.Time          // earliest heartbeat timestamp
+	lastHeartbeat     time.Time          // latest heartbeat timestamp
+	uploadCount       int64              // total samples
+	uploadSum         time.Duration      // sum of durations
 }
 
-// Store manages the device data with thread-safe operations
+// Store manages the device data with concurrent-safe operations
 type Store struct {
-	devices map[string]*Device
 	mu      sync.RWMutex
+	devices map[string]*Device
 }
 
 // New creates a new Store instance
@@ -31,7 +33,7 @@ func New() *Store {
 	}
 }
 
-// LoadFromCSV loads devices from a CSV file
+// LoadFromCSV loads exactly 5 devices from a CSV file with concurrent-safe operations
 func (s *Store) LoadFromCSV(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -42,13 +44,30 @@ func (s *Store) LoadFromCSV(filename string) error {
 	reader := csv.NewReader(file)
 	
 	// Read header
-	_, err = reader.Read()
+	header, err := reader.Read()
 	if err != nil {
 		return fmt.Errorf("failed to read CSV header: %w", err)
+	}
+	
+	// Validate header
+	if len(header) == 0 || header[0] != "device_id" {
+		return fmt.Errorf("invalid CSV header: expected 'device_id', got %v", header)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Clear existing devices
+	s.devices = make(map[string]*Device)
+	
+	// Expected device IDs from the specification
+	expectedDevices := map[string]bool{
+		"60-6b-44-84-dc-64": false,
+		"b4-45-52-a2-f1-3c": false,
+		"26-9a-66-01-33-83": false,
+		"18-b8-87-e7-1f-06": false,
+		"38-4e-73-e0-33-59": false,
+	}
 
 	for {
 		record, err := reader.Read()
@@ -61,12 +80,36 @@ func (s *Store) LoadFromCSV(filename string) error {
 
 		if len(record) > 0 && record[0] != "" {
 			deviceID := record[0]
+			
+			// Validate device ID is expected
+			if _, expected := expectedDevices[deviceID]; !expected {
+				return fmt.Errorf("unexpected device ID in CSV: %s", deviceID)
+			}
+			
+			// Mark as found
+			expectedDevices[deviceID] = true
+			
+			// Create device with concurrent-safe initialization
 			s.devices[deviceID] = &Device{
-				ID:          deviceID,
-				Heartbeats:  make([]time.Time, 0),
-				UploadTimes: make([]time.Duration, 0),
+				id:               deviceID,
+				heartbeatBuckets: make(map[time.Time]bool),
 			}
 		}
+	}
+	
+	// Verify all 5 devices were loaded
+	loadedCount := 0
+	var missingDevices []string
+	for deviceID, found := range expectedDevices {
+		if found {
+			loadedCount++
+		} else {
+			missingDevices = append(missingDevices, deviceID)
+		}
+	}
+	
+	if loadedCount != 5 {
+		return fmt.Errorf("expected exactly 5 devices, loaded %d. Missing: %v", loadedCount, missingDevices)
 	}
 
 	return nil
@@ -100,117 +143,135 @@ func (s *Store) GetAllDevices() map[string]*Device {
 	return devices
 }
 
-// AddHeartbeat adds a heartbeat timestamp for a device
+// AddHeartbeat adds a heartbeat with O(1) bucket insertion and minimal lock duration
+func (d *Device) AddHeartbeat(sentAt time.Time) {
+	// Per-device Mutex: Minimize lock duration for concurrent simulator requests
+	d.mu.Lock()
+	
+	// O(1) Operations: Direct map access for heartbeats
+	// Efficient minute-bucket operations
+	minuteBucket := sentAt.Truncate(time.Minute)
+	d.heartbeatBuckets[minuteBucket] = true
+	
+	// Update first/last heartbeat tracking (O(1) operations)
+	if d.firstHeartbeat.IsZero() || sentAt.Before(d.firstHeartbeat) {
+		d.firstHeartbeat = sentAt
+	}
+	if d.lastHeartbeat.IsZero() || sentAt.After(d.lastHeartbeat) {
+		d.lastHeartbeat = sentAt
+	}
+	
+	d.mu.Unlock() // Release lock immediately after updates
+}
+
+// AddUploadStat adds upload statistics with O(1) accumulation and minimal lock duration
+func (d *Device) AddUploadStat(sentAt time.Time, uploadNanos int64) {
+	// Per-device Mutex: Minimize lock duration for concurrent simulator requests
+	d.mu.Lock()
+	
+	// O(1) Operations: Direct accumulation for uploads
+	d.uploadCount++
+	d.uploadSum += time.Duration(uploadNanos)
+	
+	d.mu.Unlock() // Release lock immediately after updates
+}
+
+// CalculateUptime returns uptime percentage using exact formula implementation
+func (d *Device) CalculateUptime() float64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	if len(d.heartbeatBuckets) == 0 {
+		return 0.0 // No heartbeats
+	}
+	
+	if len(d.heartbeatBuckets) == 1 {
+		return 100.0 // Single heartbeat = 100%
+	}
+	
+	// Total minutes from first to last (inclusive)
+	firstMinute := d.firstHeartbeat.Truncate(time.Minute)
+	lastMinute := d.lastHeartbeat.Truncate(time.Minute)
+	totalMinutes := int64(lastMinute.Sub(firstMinute)/time.Minute) + 1
+	
+	// Count unique minute buckets with heartbeats
+	heartbeatMinutes := int64(len(d.heartbeatBuckets))
+	
+	// Exact formula: uptime = (sumHeartbeats / numMinutesBetweenFirstAndLast) * 100
+	return (float64(heartbeatMinutes) / float64(totalMinutes)) * 100
+}
+
+// CalculateAvgUploadTime returns simple average of upload times
+func (d *Device) CalculateAvgUploadTime() time.Duration {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	if d.uploadCount == 0 {
+		return 0
+	}
+	
+	return d.uploadSum / time.Duration(d.uploadCount)
+}
+
+// Milestone 6: Optimized concurrent operations for simulator requests
+// Global RWMutex: Devices map read/write
+// Per-device Mutex: Individual device updates  
+// O(1) Operations: Direct map access for heartbeats/uploads
+
+// AddHeartbeat provides thread-safe heartbeat addition with minimal lock duration
 func (s *Store) AddHeartbeat(deviceID string, timestamp time.Time) {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
-	if !exists {
-		return
-	}
-
-	device.mu.Lock()
-	defer device.mu.Unlock()
+	s.mu.RUnlock() // Release immediately after lookup
 	
-	device.Heartbeats = append(device.Heartbeats, timestamp)
-	device.LastSeen = timestamp
+	if exists {
+		// Per-device Mutex: Individual device update (no global contention)
+		device.AddHeartbeat(timestamp)
+	}
 }
 
-// AddUploadTime adds an upload duration for a device
+// AddUploadTime provides thread-safe upload time addition with minimal lock duration
 func (s *Store) AddUploadTime(deviceID string, duration time.Duration) {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
-	if !exists {
-		return
-	}
-
-	device.mu.Lock()
-	defer device.mu.Unlock()
+	s.mu.RUnlock() // Release immediately after lookup
 	
-	device.UploadTimes = append(device.UploadTimes, duration)
+	if exists {
+		// Per-device Mutex: Individual device update (no global contention)
+		device.AddUploadStat(time.Now(), duration.Nanoseconds())
+	}
 }
 
-// CalculateUptime calculates uptime percentage for a device using the exact formula
-// uptime = (sumHeartbeats / numMinutesBetweenFirstAndLastHeartbeat) * 100
+// CalculateUptime provides thread-safe uptime calculation with minimal lock duration
 func (s *Store) CalculateUptime(deviceID string) float64 {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
+	s.mu.RUnlock() // Release immediately after lookup
+	
 	if !exists {
 		return 0.0
 	}
-
-	device.mu.RLock()
-	defer device.mu.RUnlock()
-
-	if len(device.Heartbeats) == 0 {
-		return 0.0
-	}
-
-	if len(device.Heartbeats) == 1 {
-		return 100.0 // Single heartbeat = 100% uptime
-	}
-
-	// Find first and last heartbeat times
-	firstHeartbeat := device.Heartbeats[0]
-	lastHeartbeat := device.Heartbeats[0]
-
-	for _, hb := range device.Heartbeats {
-		if hb.Before(firstHeartbeat) {
-			firstHeartbeat = hb
-		}
-		if hb.After(lastHeartbeat) {
-			lastHeartbeat = hb
-		}
-	}
-
-	// Calculate minutes between first and last heartbeat
-	duration := lastHeartbeat.Sub(firstHeartbeat)
-	numMinutes := duration.Minutes()
-
-	if numMinutes == 0 {
-		return 100.0 // All heartbeats in same minute
-	}
-
-	// Apply exact uptime formula
-	sumHeartbeats := float64(len(device.Heartbeats))
-	uptime := (sumHeartbeats / numMinutes) * 100
-
-	// Cap at 100%
-	if uptime > 100.0 {
-		uptime = 100.0
-	}
-
-	return uptime
+	
+	// Per-device Mutex: Individual device calculation (no global contention)
+	return device.CalculateUptime()
 }
 
-// CalculateAverageUploadTime calculates average upload time for a device
+// CalculateAverageUploadTime provides thread-safe average upload time calculation
 func (s *Store) CalculateAverageUploadTime(deviceID string) time.Duration {
+	// Global RWMutex: Read lock for device lookup (minimize duration)
 	s.mu.RLock()
 	device, exists := s.devices[deviceID]
-	s.mu.RUnlock()
-
+	s.mu.RUnlock() // Release immediately after lookup
+	
 	if !exists {
 		return 0
 	}
-
-	device.mu.RLock()
-	defer device.mu.RUnlock()
-
-	if len(device.UploadTimes) == 0 {
-		return 0
-	}
-
-	var total time.Duration
-	for _, uploadTime := range device.UploadTimes {
-		total += uploadTime
-	}
-
-	return total / time.Duration(len(device.UploadTimes))
+	
+	// Per-device Mutex: Individual device calculation (no global contention)
+	return device.CalculateAvgUploadTime()
 }
 
 // GetDeviceStats returns device statistics safely
@@ -223,8 +284,8 @@ func (s *Store) GetDeviceStats(deviceID string) (lastSeen time.Time, heartbeatCo
 		return time.Time{}, 0, false
 	}
 
-	device.mu.RLock()
-	defer device.mu.RUnlock()
+	device.mu.Lock()
+	defer device.mu.Unlock()
 
-	return device.LastSeen, len(device.Heartbeats), true
+	return device.lastHeartbeat, len(device.heartbeatBuckets), true
 }
