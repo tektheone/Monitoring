@@ -33,6 +33,12 @@ node_modules/
 .pnp.js
 
 # Production builds
+dist/
+
+# NPM/Yarn lockfiles (requested to ignore)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 /frontend/dist/
 /frontend/build/
 
