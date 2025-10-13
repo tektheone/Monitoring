@@ -21,6 +21,49 @@
     }
   ],
   "paths": {
+    "/devices": {
+      "get": {
+        "description": "List all devices",
+        "responses": {
+          "200": {
+            "description": "List of devices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "title": "DeviceSummary",
+                    "type": "object",
+                    "required": [
+                      "id"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Device ID"
+                      },
+                      "last_seen": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Last heartbeat timestamp in RFC3339 format"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": ["online", "offline"],
+                        "description": "Device status based on recent heartbeats"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/devices/{device_id}/heartbeat": {
       "post": {
         "description": "Register a heartbeat from a device",
