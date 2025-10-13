@@ -56,14 +56,17 @@ export async function getDevices(): Promise<DeviceSummary[]> {
 }
 
 export async function getDeviceStats(deviceId: string): Promise<DeviceStats | null> {
+  let res
   try {
-    const res = await api.get<DeviceStats>(`/api/v1/devices/${encodeURIComponent(deviceId)}/stats`, {
+    res = await api.get<DeviceStats>(`/api/v1/devices/${encodeURIComponent(deviceId)}/stats`, {
       validateStatus: () => true,
     })
-    if (res.status === 204) return null
-    if (res.status >= 200 && res.status < 300) return res.data
-    throw new Error(res.status >= 500 ? 'Server unavailable (5xx)' : 'Failed to fetch device stats')
   } catch (e) {
+    // Network / Axios errors
     throw new Error(friendlyMessage(e))
   }
+  if (res.status === 204) return null
+  if (res.status >= 200 && res.status < 300) return res.data
+  // For non-2xx responses (handled via validateStatus), throw explicit error without wrapping
+  throw new Error(res.status >= 500 ? 'Server unavailable (5xx)' : 'Failed to fetch device stats')
 }
