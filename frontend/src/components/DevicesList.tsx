@@ -3,6 +3,7 @@ import { getDevices } from '@/api/client'
 import type { DeviceSummary } from '@/types/api'
 import DeviceCard from './DeviceCard'
 import { DEVICES_REFRESH_MS } from '@/config'
+import { useSSE } from '@/hooks/useSSE'
 
 function SkeletonCard() {
   return (
@@ -17,10 +18,11 @@ function SkeletonCard() {
 }
 
 export default function DevicesList({ onSelect, refreshMs = DEVICES_REFRESH_MS }: { onSelect?: (d: DeviceSummary) => void; refreshMs?: number }) {
+  const { connected: sseConnected } = useSSE()
   const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery<DeviceSummary[]>({
     queryKey: ['devices'],
     queryFn: getDevices,
-    refetchInterval: refreshMs,
+    refetchInterval: sseConnected ? false : refreshMs,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     retry: 1,

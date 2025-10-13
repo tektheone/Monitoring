@@ -1,28 +1,76 @@
-import { useIsFetching, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
-import { getHealth } from '@/api/client'
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { getHealth, getDevices } from '@/api/client'
 import DevicesList from '@/components/DevicesList'
 import DeviceDetailsModal from '@/components/DeviceDetailsModal'
 import type { DeviceSummary } from '@/types/api'
 import Layout from '@/components/Layout'
 import HealthCard from '@/components/HealthCard'
+import { sse } from '@/lib/sse'
+import { useSSE } from '@/hooks/useSSE'
+import { useConnection } from '@/hooks/useConnection'
 
 function App() {
   const [selected, setSelected] = useState<DeviceSummary | null>(null)
   const globalFetching = useIsFetching()
+  const qc = useQueryClient()
+  const { status: sseStatus, connected: sseConnected } = useSSE()
+  const { online } = useConnection()
   const { data, error, isFetching } = useQuery({
     queryKey: ['health'],
     queryFn: getHealth,
-    refetchInterval: 15_000,
+    // When SSE is connected, we don't need to poll health
+    refetchInterval: sseConnected ? false : 15_000,
     retry: 1,
   })
 
-  // Derive footer/backend status from health query
-  const backendStatus: 'connected' | 'reconnecting' | 'disconnected' = error
-    ? 'disconnected'
-    : isFetching
+  // Bind SSE messages to React Query caches
+  useEffect(() => {
+    const offHealth = sse.on('health:update', (payload) => {
+      qc.setQueryData(['health'], payload)
+    })
+    const offDevices = sse.on('devices:update', (payload) => {
+      // payload can be full list or delta. If full list present, set it directly
+      if (Array.isArray(payload?.devices)) {
+        qc.setQueryData(['devices'], payload.devices)
+      } else if (payload && payload.id) {
+        // merge single device update into list if exists
+        qc.setQueryData<DeviceSummary[] | undefined>(['devices'], (prev) => {
+          if (!prev) return prev
+          const idx = prev.findIndex((d) => d.id === payload.id)
+          if (idx === -1) return prev
+          const next = prev.slice()
+          next[idx] = { ...next[idx], ...payload }
+          return next
+        })
+      }
+    })
+    return () => {
+      offHealth()
+      offDevices()
+    }
+  }, [qc])
+
+  // If SSE connected but devices cache is empty (possible race with initial snapshot), fetch once
+  useEffect(() => {
+    if (sseStatus === 'connected') {
+      const current = qc.getQueryData<DeviceSummary[] | undefined>(['devices'])
+      if (!current || current.length === 0) {
+        getDevices()
+          .then((list) => qc.setQueryData(['devices'], list))
+          .catch(() => {/* ignore; SSE may populate shortly */})
+      }
+    }
+  }, [sseStatus, qc])
+
+  // Derive backend status primarily from SSE
+  const backendStatus: 'connected' | 'reconnecting' | 'disconnected' | 'offline' = !online
+    ? 'offline'
+    : sseStatus === 'connected'
+    ? 'connected'
+    : sseStatus === 'connecting'
     ? 'reconnecting'
-    : 'connected'
+    : 'disconnected'
 
   // Do not early-return on loading or error; we want the dashboard visible.
 
