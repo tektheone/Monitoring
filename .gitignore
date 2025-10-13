@@ -115,3 +115,7 @@ Thumbs.db
 # Tooling allowlist: ensure backend source is not ignored so assistants can read/edit
 !backend/**
 !**/*.go
+
+# Server binary
+backend/server
+backend/bin/server

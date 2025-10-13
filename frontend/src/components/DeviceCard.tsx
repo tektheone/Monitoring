@@ -20,7 +20,12 @@ function DeviceCard({ device, onClick }: Props) {
       <div className="flex items-center justify-between">
         <div className="font-mono text-sm text-gray-800 break-all">{device.id}</div>
         <div className="flex items-center gap-2">
-          <span className={`inline-block h-2.5 w-2.5 rounded-full ${statusColor}`} />
+          <span className="relative inline-flex h-2.5 w-2.5 items-center justify-center" aria-hidden="true">
+            {isOnline && (
+              <span className={`absolute inline-flex h-full w-full rounded-full ${statusColor} opacity-60 animate-ping`} />
+            )}
+            <span className={`relative inline-block h-2.5 w-2.5 rounded-full ${statusColor}`} />
+          </span>
           <span className="text-sm capitalize text-gray-700">{device.status}</span>
         </div>
       </div>

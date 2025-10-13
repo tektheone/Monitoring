@@ -1,11 +1,10 @@
-import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { getHealth, getDevices } from '@/api/client'
+import { getDevices } from '@/api/client'
 import DevicesList from '@/components/DevicesList'
 import DeviceDetailsModal from '@/components/DeviceDetailsModal'
 import type { DeviceSummary } from '@/types/api'
 import Layout from '@/components/Layout'
-import HealthCard from '@/components/HealthCard'
 import { sse } from '@/lib/sse'
 import { useSSE } from '@/hooks/useSSE'
 import { useConnection } from '@/hooks/useConnection'
@@ -14,19 +13,14 @@ function App() {
   const [selected, setSelected] = useState<DeviceSummary | null>(null)
   const globalFetching = useIsFetching()
   const qc = useQueryClient()
-  const { status: sseStatus, connected: sseConnected } = useSSE()
+  const { status: sseStatus } = useSSE()
   const { online } = useConnection()
-  const { data, error, isFetching } = useQuery({
-    queryKey: ['health'],
-    queryFn: getHealth,
-    // When SSE is connected, we don't need to poll health
-    refetchInterval: sseConnected ? false : 15_000,
-    retry: 1,
-  })
+  // Removed health polling and card per request; we rely on connection status only
 
   // Bind SSE messages to React Query caches
   useEffect(() => {
     const offHealth = sse.on('health:update', (payload) => {
+      // Health updates are ignored in UI now, but keep cache if other parts want it later
       qc.setQueryData(['health'], payload)
     })
     const offDevices = sse.on('devices:update', (payload) => {
@@ -76,12 +70,7 @@ function App() {
 
   return (
     <Layout
-      header={{
-        title: 'Fleet Monitoring Dashboard',
-        healthStatus: data?.status,
-        deviceCount: data?.device_count,
-        lastUpdated: data?.timestamp,
-      }}
+      header={{}}
       backendStatus={backendStatus}
     >
       {/* Global fetching indicator */}
@@ -90,11 +79,6 @@ function App() {
           Updating…
         </div>
       )}
-
-      {/* HealthCard */}
-      <div className="mb-4">
-        <HealthCard data={data} isFetching={isFetching} isError={!!error} />
-      </div>
 
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-xl font-semibold">Devices</h2>
