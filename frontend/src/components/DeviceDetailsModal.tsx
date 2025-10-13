@@ -3,6 +3,7 @@ import { getDeviceStats } from '@/api/client'
 import type { DeviceStats, DeviceSummary } from '@/types/api'
 import { formatDuration } from '@/utils/duration'
 import { timeAgo } from '@/utils/time'
+import { DEVICE_STATS_REFRESH_MS } from '@/config'
 
 type Props = {
   device: DeviceSummary
@@ -10,10 +11,13 @@ type Props = {
 }
 
 export default function DeviceDetailsModal({ device, onClose }: Props) {
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<null | DeviceStats>({
+  const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery<null | DeviceStats>({
     queryKey: ['device-stats', device.id],
     queryFn: () => getDeviceStats(device.id),
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: DEVICE_STATS_REFRESH_MS,
+    retry: 1,
   })
 
   return (
@@ -37,13 +41,16 @@ export default function DeviceDetailsModal({ device, onClose }: Props) {
         <div className="mt-4">
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-sm font-semibold">Statistics</h3>
-            <button
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-500">Last updated: {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : '—'}</span>
+              <button
               className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
               onClick={() => refetch()}
               disabled={isFetching}
             >
-              {isFetching ? 'Refreshing…' : 'Refresh'}
-            </button>
+                {isFetching ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
           </div>
 
           {isLoading ? (
