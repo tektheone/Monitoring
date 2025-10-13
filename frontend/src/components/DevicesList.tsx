@@ -1,5 +1,6 @@
+import { sendHeartbeatFlow } from '@/hooks/useHeartbeat'
 import { useQuery } from '@tanstack/react-query'
-import { getDevices, sendHeartbeat } from '@/api/client'
+import { getDevices } from '@/api/client'
 import type { DeviceSummary } from '@/types/api'
 import DeviceCard from './DeviceCard'
 import { DEVICES_REFRESH_MS } from '@/config'
@@ -40,20 +41,11 @@ export default function DevicesList({ onSelect, refreshMs = DEVICES_REFRESH_MS }
   }, [])
 
   async function handleSendHeartbeat() {
-    const id = hbId.trim()
-    if (!id) return
-    setHbBusy(true)
-    setHbMsg(null)
-    try {
-      await sendHeartbeat(id)
-      setHbMsg('Heartbeat sent')
-      // Ensure UI updates even if SSE is momentarily disconnected
-      refetch()
-    } catch (e) {
-      setHbMsg((e as Error).message)
-    } finally {
-      setHbBusy(false)
-    }
+    await sendHeartbeatFlow(hbId, {
+      setBusy: setHbBusy,
+      setMsg: setHbMsg,
+      refetch,
+    })
   }
 
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : '—'
