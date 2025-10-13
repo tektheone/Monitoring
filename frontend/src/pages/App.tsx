@@ -1,13 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
+import { getHealth } from '@/api/client'
 
 function App() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['health'],
-    queryFn: async () => {
-      const res = await fetch('/health')
-      if (!res.ok) throw new Error('Failed to fetch health')
-      return res.json() as Promise<{ status: string; timestamp: number; device_count: number }>
-    },
+    queryFn: getHealth,
   })
 
   if (isLoading) return <div className="p-6">Loading…</div>
