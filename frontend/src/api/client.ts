@@ -28,6 +28,15 @@ function friendlyMessage(err: unknown): string {
   return 'Unknown error'
 }
 
+export async function sendHeartbeat(deviceId: string, when: Date = new Date()): Promise<void> {
+  try {
+    const url = `/api/v1/devices/${encodeURIComponent(deviceId)}/heartbeat`
+    await api.post(url, { sent_at: when.toISOString() })
+  } catch (e) {
+    throw new Error(friendlyMessage(e))
+  }
+}
+
 export async function getHealth(): Promise<HealthStatus> {
   try {
     const { data } = await api.get<HealthStatus>('/health')

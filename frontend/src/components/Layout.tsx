@@ -1,28 +1,23 @@
 import { ReactNode, useState } from 'react'
 import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { useConnection } from '@/hooks/useConnection'
+import { SHOW_FUTURE_NAV } from '@/config'
 
-export function Header({ title, healthStatus, deviceCount, lastUpdated, connection }: { title: string; healthStatus?: string; deviceCount?: number; lastUpdated?: number; connection?: 'connected' | 'reconnecting' | 'disconnected' | 'offline' }) {
-  const healthy = healthStatus === 'healthy'
+export function Header({ title, connection }: { title?: string; connection?: 'connected' | 'reconnecting' | 'disconnected' | 'offline' }) {
   const connColor = connection === 'connected' ? 'bg-green-500' : connection === 'reconnecting' ? 'bg-yellow-500' : connection ? 'bg-red-500' : 'bg-gray-300'
+  const logoUrl = new URL('../../logo.svg', import.meta.url).href
   return (
-    <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b text-white">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="h-6 w-6 rounded bg-gray-900" />
-          <h1 className="text-lg font-semibold">{title}</h1>
+        <div className="flex items-center gap-3 w-full">
+          <img src={logoUrl} alt="Company logo" className="rounded object-cover" />
+          {title && <h1 className="text-lg font-semibold">{title}</h1>}
         </div>
-        <div className="flex items-center gap-4 text-sm text-gray-700">
+        <div className="flex items-center gap-4 text-sm text-white/90">
           <div className="hidden sm:flex items-center gap-2">
             <span className={`inline-block h-2.5 w-2.5 rounded-full ${connColor}`} />
-            <span className="capitalize">{connection ?? 'unknown'}</span>
+            <span className="capitalize text-black">{connection ?? 'unknown'}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${healthy ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="capitalize">{healthStatus ?? 'unknown'}</span>
-          </div>
-          <div className="hidden sm:block">Devices: <span className="font-medium">{deviceCount ?? '—'}</span></div>
-          <div className="hidden md:block text-xs text-gray-500">Updated: {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : '—'}</div>
         </div>
       </div>
     </header>
@@ -31,11 +26,15 @@ export function Header({ title, healthStatus, deviceCount, lastUpdated, connecti
 
 export function Sidebar({ current, onNavigate }: { current: string; onNavigate: (key: string) => void }) {
   const [open, setOpen] = useState(false)
-  const links = [
-    { key: 'devices', label: 'Devices' },
-    { key: 'analytics', label: 'Analytics (soon)' },
-    { key: 'settings', label: 'Settings (soon)' },
-  ]
+  const links = SHOW_FUTURE_NAV
+    ? [
+        { key: 'devices', label: 'Devices' },
+        { key: 'analytics', label: 'Analytics (soon)' },
+        { key: 'settings', label: 'Settings (soon)' },
+      ]
+    : [
+        { key: 'devices', label: 'Devices' },
+      ]
   return (
     <aside className="border-r bg-white">
       <div className="sm:hidden p-2">
